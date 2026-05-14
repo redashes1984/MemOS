@@ -58,10 +58,18 @@ class UniversalAPIEmbedder(BaseEmbedder):
                 else None,
             )
 
+    def _get_model(self) -> str:
+        """Get model name from config, falling back to default."""
+        return getattr(self.config, "model_name_or_path", None) or "text-embedding-3-large"
+
+    def _get_backup_model(self) -> str:
+        """Get backup model name from config, falling back to default."""
+        return getattr(self.config, "backup_model_name_or_path", None) or "text-embedding-3-large"
+
     @timed_with_status(
         log_prefix="model_timed_embedding",
         log_extra_args=lambda self, texts: {
-            "model_name_or_path": "text-embedding-3-large",
+            "model_name_or_path": self._get_model(),
             "text_len": len(texts),
             "text_content": texts,
         },
@@ -76,18 +84,16 @@ class UniversalAPIEmbedder(BaseEmbedder):
         logger.info(f"Embeddings request with input: {texts}")
         if self.provider == "openai" or self.provider == "azure":
             try:
-
-                async def _create_embeddings():
-                    return self.client.embeddings.create(
-                        model=getattr(self.config, "model_name_or_path", "text-embedding-3-large"),
-                        input=texts,
-                    )
-
                 init_time = time.time()
-                response = asyncio.run(
-                    asyncio.wait_for(
-                        _create_embeddings(), timeout=int(os.getenv("MOS_EMBEDDER_TIMEOUT", 5))
-                    )
+                # Use sync OpenAI client directly — no asyncio.run() needed.
+                # asyncio.run() fails when called from within an existing event loop
+                # (e.g. uvicorn, the standard FastAPI ASGI server).
+                # The openai.OpenAI client is synchronous by design.
+                model = self._get_model()
+                response = self.client.embeddings.create(
+                    model=model,
+                    input=texts,
+                    timeout=int(os.getenv("MOS_EMBEDDER_TIMEOUT", 30)),
                 )
                 logger.info(f"Embeddings request succeeded with {time.time() - init_time} seconds")
                 return [r.embedding for r in response.data]
@@ -97,23 +103,12 @@ class UniversalAPIEmbedder(BaseEmbedder):
                         f"Embeddings request ended with {type(e).__name__} error: {e}, try backup client"
                     )
                     try:
-
-                        async def _create_embeddings_backup():
-                            return self.backup_client.embeddings.create(
-                                model=getattr(
-                                    self.config,
-                                    "backup_model_name_or_path",
-                                    "text-embedding-3-large",
-                                ),
-                                input=texts,
-                            )
-
                         init_time = time.time()
-                        response = asyncio.run(
-                            asyncio.wait_for(
-                                _create_embeddings_backup(),
-                                timeout=int(os.getenv("MOS_EMBEDDER_TIMEOUT", 5)),
-                            )
+                        backup_model = self._get_backup_model()
+                        response = self.backup_client.embeddings.create(
+                            model=backup_model,
+                            input=texts,
+                            timeout=int(os.getenv("MOS_EMBEDDER_TIMEOUT", 30)),
                         )
                         logger.info(
                             f"Backup embeddings request succeeded with {time.time() - init_time} seconds"

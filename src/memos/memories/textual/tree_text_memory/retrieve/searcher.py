@@ -324,6 +324,11 @@ class Searcher:
         if parsed_goal.memories:
             embed_texts = list(dict.fromkeys([query, *parsed_goal.memories]))
             query_embedding = self.embedder.embed(embed_texts)
+        # Ensure query_embedding is always set — needed by downstream retrievers.
+        # In fast mode, if the LLM parser returns no extra memories, query_embedding
+        # would otherwise remain None and cause a TypeError at retrieval time.
+        if query_embedding is None:
+            query_embedding = self.embedder.embed([query])
         return parsed_goal, query_embedding, context, query
 
     @timed

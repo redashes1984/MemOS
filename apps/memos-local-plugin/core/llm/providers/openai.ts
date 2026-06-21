@@ -18,7 +18,7 @@ import type {
 } from "../types.js";
 
 interface OaChoice {
-  message?: { content?: string };
+  message?: { content?: string; reasoning_content?: string };
   finish_reason?: string;
 }
 
@@ -88,7 +88,9 @@ export class OpenAiLlmProvider implements LlmProvider {
     });
 
     const choice = json.choices?.[0];
-    const text = choice?.message?.content ?? "";
+    const text = choice?.message?.content
+      ?? choice?.message?.reasoning_content
+      ?? "";
     return {
       text,
       finishReason: mapFinish(choice?.finish_reason),
